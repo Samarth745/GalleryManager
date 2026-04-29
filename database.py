@@ -69,7 +69,7 @@ def init_db(db_path: str = DB_PATH) -> sqlite3.Connection:
     return conn
 
 
-def init_faiss_index(embedding_dim: int = 256) -> faiss.Index:
+def init_faiss_index(embedding_dim: int = 512) -> faiss.Index:
     """
     Initialize a FAISS index for vector storage.
     
@@ -135,7 +135,7 @@ def load_faiss_index() -> Tuple[faiss.Index, dict]:
     return index, metadata
 
 
-def build_faiss_from_db(conn: sqlite3.Connection, embedding_dim: int = 256) -> faiss.Index:
+def build_faiss_from_db(conn: sqlite3.Connection, embedding_dim: int = 512) -> faiss.Index:
     """
     Build FAISS index from existing database embeddings.
     
@@ -157,6 +157,20 @@ def build_faiss_from_db(conn: sqlite3.Connection, embedding_dim: int = 256) -> f
     vectors = []
     file_ids = []
     
+    # Detect actual embedding dimension from first row
+    actual_dim = None
+    for file_id, emb_bytes in rows:
+        emb = np.frombuffer(emb_bytes, dtype=np.float32)
+        actual_dim = len(emb)
+        break
+    
+    if actual_dim is None:
+        logger.warning("No embeddings found in database")
+        return init_faiss_index(embedding_dim)
+    
+    # Rebuild vectors with detected dimension
+    vectors = []
+    file_ids = []
     for file_id, emb_bytes in rows:
         emb = np.frombuffer(emb_bytes, dtype=np.float32)
         # Normalize for cosine similarity
@@ -164,8 +178,8 @@ def build_faiss_from_db(conn: sqlite3.Connection, embedding_dim: int = 256) -> f
         vectors.append(emb)
         file_ids.append(file_id)
     
-    # Create index and add vectors
-    index = faiss.IndexFlatIP(embedding_dim)
+    # Create index with detected dimension
+    index = faiss.IndexFlatIP(actual_dim)
     vectors_array = np.array(vectors, dtype=np.float32)
     index.add(vectors_array)
     
@@ -325,7 +339,8 @@ def process_folder(
             for file_path, emb in zip(batch, embeddings):
                 if emb is not None:
                     file_id = generate_file_id(file_path)
-                    emb_bytes = emb.numpy().tobytes()
+                    # Convert to float32 before storing (CLIP outputs float16)
+                    emb_bytes = emb.float().numpy().tobytes()
                     emb_rows.append((file_id, emb_bytes))
             
             # Insert embeddings in batch
@@ -364,9 +379,11 @@ def add_folder(folder_path: str, embedding_module=None) -> Tuple[int, int]:
         from image_processing.embeding_processor import EmbeddingModule
         emb_module = EmbeddingModule()
         emb_module.load_model()
-    res = process_folder(folder_path, embedding_module)
-    emb_module.unload_model()
-    return res
+        res = process_folder(folder_path, emb_module)
+        emb_module.unload_model()
+        return res
+    else:
+        return process_folder(folder_path, embedding_module)
 
 
 if __name__ == "__main__":
