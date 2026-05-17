@@ -1,0 +1,12 @@
+streamlit
+pandas
+numpy
+Pillow
+sqlalchemy
+faiss-cpu
+torch
+torchvision
+opencv-python
+hdbscan
+scikit-learn
+clip
